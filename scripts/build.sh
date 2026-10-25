@@ -36,10 +36,8 @@ find "$EM_CACHE" \
 # Bypass host pkg-config discovery for SDL2 and FreeType.
 # Emscripten's ports must provide the actual WASM libraries.
 set +e
-emmake make -j2 \
-  CFG=default \
-  SDL2_CONFIG=true \
-  FREETYPE_CONFIG=true \
+emcmake cmake -B build -j2 \
+  DCMAKE_BUILD_TYPE=RelWithDebInfo\
   "FLAGS=-sUSE_SDL=2 -sUSE_FREETYPE=1 -sUSE_BZIP2=1 -sUSE_ZLIB=1 -sUSE_LIBPNG=1" \
   "LDFLAGS=-sUSE_SDL=2 -sUSE_FREETYPE=1 -sUSE_BZIP2=1 -sUSE_ZLIB=1 -sUSE_LIBPNG=1 -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=2GB"
 BUILD_STATUS=$?
