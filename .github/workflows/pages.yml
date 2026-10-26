@@ -1,3 +1,4 @@
+
 name: Build and deploy OpenTTD WebAssembly
 
 on:
@@ -6,76 +7,51 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write  
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
 
     steps:
       - name: Checkout web wrapper
         uses: actions/checkout@v4
 
-      - name: Install Emscripten SDK
-        uses: mymindstorm/setup-emsdk@v14
-        with:
-          version: 3.1.64
-          actions-cache-folder: emsdk-cache
-
       - name: Install build utilities
         run: |
           sudo apt-get update
-          sudo apt-get install --yes git curl unzip file
+          sudo apt-get install -y \
+            git curl unzip file cmake
 
-      - name: Verify toolchain
-        shell: bash
-        run: |
-          emcc --version
-          emcc --show-ports || true
-          git --version
-          unzip -v | head -n 2
-
-      - name: Build OpenTTD for the browser
+      - name: Build OpenTTD for browser
         env:
-          GFXSET_URL: ${{ vars.GFXSET_URL }}
-          SOURCE_REPOSITORY: https://github.com/openTTD/openTTD.git
+          SOURCE_REPOSITORY: https://github.com/OpenTTD/OpenTTD.git
           SOURCE_REF: master
         run: bash scripts/build.sh
-
-      - name: Download and install pak64
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          GFX_URL="https://github.com/OpenTTD/OpenGFX2/releases/download/0.8.1/OpenGFX2_Classic-0.8.1.tar"
-          GFX_ZIP="$RUNNER_TEMP/OpenGFX2_Classic-0.8.1.tar"
-          GFX_DIR="$RUNNER_TEMP/gfx"
-
-          curl --fail --location --retry 3 "$GFX_URL" -o "$GFX_ZIP"
-          mkdir -p "$GFX_DIR"
-          unzip -q "$GFX_ZIP" -d "$GFX_DIR"
-
-          
-          mv "$GFX_DIR/" dist/
 
       - name: Validate WebAssembly artifacts
         shell: bash
         run: |
           set -euo pipefail
 
-          test -s dist/index.html
-          test -s dist/openttd.js
-          test -s dist/openttd.wasm
-          ls dist
-          file dist/openttd.js dist/openttd.wasm
+          for file in \
+            index.html \
+            openttd.js \
+            openttd.wasm \
+            openttd.data
+          do
+            test -s "dist/$file"
+          done
 
-          echo "WebAssembly artifacts are present."
+          ls -lh dist/
 
-      - name: Upload Pages artifact
-        uses: actions/upload-artifact@v4  
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
         with:
+          name: openttd-web
           path: dist/
-          retention-days: 30  
+          retention-days: 30
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
@@ -84,6 +60,6 @@ jobs:
           publish_dir: ./dist
           publish_branch: gh-pages
           force_orphan: true
-          user_name: 'github-actions[bot]'
-          user_email: 'github-actions[bot]@users.noreply.github.com'
-          commit_message: 'Deploy OpenTTD Web'
+          user_name: github-actions[bot]
+          user_email: github-actions[bot]@users.noreply.github.com
+          commit_message: Deploy OpenTTD Web
