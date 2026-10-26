@@ -75,14 +75,7 @@ echo "=== Staging site ==="
 cp build/openttd.js "$DIST/"
 cp build/openttd.wasm "$DIST/"
 cp build/openttd.data "$DIST/"
-
-# Prefer the existing OpenTTD shell for the first
-# working build. A custom wrapper can replace it later.
-if [[ -f "$ROOT/web/index.html" ]]; then
-  cp "$ROOT/web/index.html" "$DIST/index.html"
-else
-  cp build/openttd.html "$DIST/index.html"
-fi
+cp build/openttd.html "$DIST/index.html"
 
 touch "$DIST/.nojekyll"
 
