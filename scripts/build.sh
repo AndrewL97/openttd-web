@@ -1,3 +1,4 @@
+
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
@@ -5,95 +6,87 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="${RUNNER_TEMP:-/tmp}/openttd-wasm-source"
 DIST="$ROOT/dist"
 
-rm -rf "$WORK" "$DIST"
-mkdir -p "$DIST"
-
 : "${SOURCE_REPOSITORY:=https://github.com/OpenTTD/OpenTTD.git}"
 : "${SOURCE_REF:=master}"
 
-echo "Fetching Simutrans source: $SOURCE_REPOSITORY ($SOURCE_REF)"
-git clone --depth 1 --branch "$SOURCE_REF" "$SOURCE_REPOSITORY" "$WORK"
+rm -rf "$WORK" "$DIST"
+mkdir -p "$WORK" "$DIST"
+
+echo "=== Fetching OpenTTD ==="
+git clone --depth 1 --branch "$SOURCE_REF" \
+  "$SOURCE_REPOSITORY" "$WORK"
+
 cd "$WORK"
 
-cat > config.default <<'CONFIG'
-BACKEND = sdl2
-COLOUR_DEPTH = 16
-OSTYPE = linux
-OPTIMISE = 1
-CONFIG
+echo "=== Building OpenTTD Emscripten image ==="
+docker build \
+  -t openttd-emscripten \
+  -f os/emscripten/Dockerfile \
+  os/emscripten
 
-echo "=== Emscripten configuration ==="
-emcc --version
-emcc --show-ports || true
+# Use the container's native toolchain for host tools,
+# and its Emscripten toolchain for the actual game.
+run_build() {
+  docker run --rm \
+    --user "$(id -u):$(id -g)" \
+    -v "$WORK:$WORK" \
+    -w "$WORK" \
+    openttd-emscripten \
+    "$@"
+}
 
-EM_CACHE="$(em-config CACHE)"
-echo "Emscripten cache: $EM_CACHE"
+echo "=== Building native host tools ==="
+run_build cmake \
+  -S . \
+  -B build-host \
+  -DOPTION_TOOLS_ONLY=ON \
+  -DCMAKE_BUILD_TYPE=Release
 
-find "$EM_CACHE" \
-  \( -name 'sdl2.pc' -o -name 'freetype2.pc' \) \
-  -print 2>/dev/null || true
+run_build cmake \
+  --build build-host \
+  --target tools \
+  --parallel 2
 
-# Bypass host pkg-config discovery for SDL2 and FreeType.
-# Emscripten's ports must provide the actual WASM libraries.
-set +e
-emcmake cmake -B build \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo\
-  "FLAGS=-sUSE_SDL=2 -sUSE_FREETYPE=1 -sUSE_BZIP2=1 -sUSE_ZLIB=1 -sUSE_LIBPNG=1" \
-  "LDFLAGS=-sUSE_SDL=2 -sUSE_FREETYPE=1 -sUSE_BZIP2=1 -sUSE_ZLIB=1 -sUSE_LIBPNG=1 -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=2GB"
-BUILD_STATUS=$?
-set -e
+echo "=== Configuring WebAssembly build ==="
+run_build emcmake cmake \
+  -S . \
+  -B build \
+  -DHOST_BINARY_DIR="$WORK/build-host" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DOPTION_USE_ASSERTS=OFF
 
-if [[ $BUILD_STATUS -ne 0 ]]; then
-  echo "ERROR: Simutrans failed to build with Emscripten." >&2
-  echo "Inspect the first compiler/linker error and patch upstream dependency handling if required." >&2
-  exit "$BUILD_STATUS"
-fi
+echo "=== Compiling WebAssembly ==="
+run_build cmake \
+  --build build \
+  --target openttd \
+  --parallel 2
 
-BUILD_DIR="$WORK/build/default"
-JS_FILE="$BUILD_DIR/openttd.js"
-WASM_FILE="$BUILD_DIR/openttd.wasm"
+echo "=== Inspecting artifacts ==="
+ls -lh build/openttd.*
 
-echo "=== Inspecting build outputs ==="
-find "$BUILD_DIR" -maxdepth 1 -type f \
-  -printf '%f (%s bytes)\n' 2>/dev/null || true
-file "$BUILD_DIR/openttd" "$BUILD_DIR/openttd.wasm" 2>/dev/null || true
+for ext in html js wasm data; do
+  test -s "build/openttd.$ext" || {
+    echo "Missing build/openttd.$ext" >&2
+    exit 1
+  }
+done
 
-# Some Makefile configurations emit the JavaScript launcher without .js.
-if [[ ! -f "$JS_FILE" && -f "$BUILD_DIR/openttd" ]]; then
-  if head -c 512 "$BUILD_DIR/openttd" |
-      grep -qE '(^|[[:space:]])(var|let|const|import|function)[[:space:]]'; then
-    JS_FILE="$BUILD_DIR/openttd"
-  fi
-fi
+echo "=== Staging site ==="
+cp build/openttd.js "$DIST/"
+cp build/openttd.wasm "$DIST/"
+cp build/openttd.data "$DIST/"
 
-if [[ ! -f "$JS_FILE" || ! -f "$WASM_FILE" ]]; then
-  echo "ERROR: Expected a JavaScript launcher and WebAssembly file." >&2
-  find "$BUILD_DIR" -maxdepth 2 -type f \
-    -printf '%p\n' 2>/dev/null | head -n 120 || true
-  exit 1
-fi
-
-# Keep the JS and WASM basenames aligned with the generated loader.
-cp "$JS_FILE" "$DIST/openttd.js"
-cp "$WASM_FILE" "$DIST/openttd.wasm"
-
-# Optional direct HTTPS ZIP URL for a legally redistributable pakset.
-if [[ -n "${PAKSET_URL:-}" ]]; then
-  mkdir -p "$DIST/game"
-  curl --fail --location --retry 3 \
-    "$PAKSET_URL" -o "$RUNNER_TEMP/pakset.zip"
-  unzip -q "$RUNNER_TEMP/pakset.zip" -d "$DIST/game"
+# Prefer the existing OpenTTD shell for the first
+# working build. A custom wrapper can replace it later.
+if [[ -f "$ROOT/web/index.html" ]]; then
+  cp "$ROOT/web/index.html" "$DIST/index.html"
 else
-  echo "WARNING: PAKSET_URL is unset; game data may be missing."
+  cp build/openttd.html "$DIST/index.html"
 fi
 
-cp "$ROOT/web/index.html" "$DIST/index.html"
 touch "$DIST/.nojekyll"
 
-test -s "$DIST/index.html"
-test -s "$DIST/openttd.js"
-test -s "$DIST/openttd.wasm"
+echo "=== Final output ==="
+ls -lh "$DIST"
 
-file "$DIST/openttd.js" "$DIST/openttd.wasm"
-
-echo "Staged WebAssembly site in $DIST"
+echo "Build complete: $DIST"
