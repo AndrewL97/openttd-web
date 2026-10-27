@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="${RUNNER_TEMP:-/tmp}/openttd-wasm-source"
 DIST="$ROOT/dist"
 
-: "${SOURCE_REPOSITORY:=https://github.com/JGRennison/OpenTTD-patches.git}"
+: "${SOURCE_REPOSITORY:=https://github.com/OpenTTD/OpenTTD.git}"
 : "${SOURCE_REF:=master}"
 
 rm -rf "$WORK" "$DIST"
